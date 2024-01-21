@@ -280,7 +280,7 @@ Camera:
   far clip plane: 1000
   field of view: 60
   orthographic: 0
-  orthographic size: 5
+  orthographic size: 10
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -305,7 +305,7 @@ Transform:
   m_GameObject: {fileID: 963194225}
   serializedVersion: 2
   m_LocalRotation: {x: 0.2655561, y: 0, z: 0, w: 0.9640955}
-  m_LocalPosition: {x: 0, y: 60, z: -90}
+  m_LocalPosition: {x: 0, y: 50, z: -100}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -323,25 +323,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7632611a3bb3d1244804dcbf01056fb5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  numParticles: 1048576
-  initSize: 40
+  numParticles: 2097152
+  deltaTime: 0.025
+  initSize: 30
+  gravity: 10
   radius: 1
   gasConstant: 10
   restDensity: 1
   mass: 0.1
   density: 1
   viscosity: 0.02
-  gravity: 10
-  deltaTime: 0.025
-  minBounds: {x: -50, y: 0, z: -50}
-  maxBounds: {x: 50, y: 100, z: 50}
-  solverShader: {fileID: 7200000, guid: f4000e3305ec3b14b8f7b31781bb32dd, type: 3}
-  renderMat: {fileID: 2100000, guid: 6378f3d1b6e448e41ae0a514bce49add, type: 2}
-  particleMesh: {fileID: -5495902117074765545, guid: 32591c72e19b392408b392f27e87e875,
-    type: 3}
-  particleRenderSize: 0.5
+  minBounds: {x: -90, y: 0, z: -60}
+  maxBounds: {x: 100, y: 90, z: 60}
+  fluidComputer: {fileID: 7200000, guid: f4000e3305ec3b14b8f7b31781bb32dd, type: 3}
+  fluidMaterial: {fileID: 2100000, guid: 6378f3d1b6e448e41ae0a514bce49add, type: 2}
   sphereMesh: {fileID: 289301614986012343, guid: e4bf80ccc13306e4597dd4ace78528f5,
     type: 3}
+  particleMesh: {fileID: -5495902117074765545, guid: 32591c72e19b392408b392f27e87e875,
+    type: 3}
+  particleRenderSize: 0.4
   primaryColor: {r: 0, g: 0.64705884, b: 0.92156863, a: 1}
   secondaryColor: {r: 0.043137256, g: 0.22745098, b: 0.50980395, a: 1}
   moveParticles: 10

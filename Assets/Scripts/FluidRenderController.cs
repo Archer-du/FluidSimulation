@@ -1,8 +1,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
-public class Solver : MonoBehaviour
+public class FluidRenderController : MonoBehaviour
 {
     private struct Particle 
     {
@@ -20,34 +21,42 @@ public class Solver : MonoBehaviour
     /// <summary>
     /// 粒子数量
     /// </summary>
-    private int numParticles = 1<<20;
+    public int numParticles = 1<<20;
     
+    public float deltaTime = 0.001f;
+
     /// <summary>
     /// 水体初始大小 //TODO: 改成球体
     /// </summary>
     public float initSize = 10;
+    
+    
+    public float gravity = 9.8f;
     public float radius = 1;
     public float gasConstant = 2000;
     public float restDensity = 10;
     public float mass = 1;
     public float density = 1;
     public float viscosity = 0.01f;
-    public float gravity = 9.8f;
-    public float deltaTime = 0.001f;
 
     // 物理边界
     public Vector3 minBounds = new Vector3(-10, -10, -10);
     public Vector3 maxBounds = new Vector3(10, 10, 10);
 
-    public ComputeShader solverShader;
+    public ComputeShader fluidComputer;
 
-    public Material renderMat;
+    [FormerlySerializedAs("renderMat")] public Material fluidMaterial;
 
+    /// <summary>
+    /// 渲染指令缓冲
+    /// </summary>
     private CommandBuffer commandBuffer;
+    
     private Mesh screenQuadMesh;
     public Mesh sphereMesh;
     public Mesh particleMesh;
-    public float particleRenderSize = 0.5f;
+    
+    public float particleRenderSize = 0.4f;
 
     public Color primaryColor;
     public Color secondaryColor;
@@ -66,7 +75,6 @@ public class Solver : MonoBehaviour
     private ComputeBuffer hashValueDebugBuffer;
     private ComputeBuffer meanBuffer;
     private ComputeBuffer covBuffer;
-    private ComputeBuffer principleBuffer;
     private ComputeBuffer hashRangeBuffer;
     
     // 渲染参数
@@ -90,90 +98,30 @@ public class Solver : MonoBehaviour
     private bool blocked = true;
 
     
-    
     private static Vector4 GetPlaneParam(Vector3 p, Vector3 n) => new(n.x, n.y, n.z, -Vector3.Dot(p, n));
-
-    private void ProcessInput()
-    {
-        if (Input.GetKeyDown(KeyCode.X)) {
-            blocked = !blocked;
-            // solverShader.SetVectorArray("planes", CurrPlanes);
-        }
-        if (Input.GetKeyDown(KeyCode.Space)) {
-            paused = !paused;
-        }
-                    // Debug
-            if (Input.GetKeyDown(KeyCode.C)) {
-                uint[] debugResult = new uint[4];
-
-                hashDebugBuffer.SetData(debugResult);
-
-                solverShader.Dispatch(solverShader.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-
-                hashDebugBuffer.GetData(debugResult);
-
-                uint usedHashBuckets = debugResult[0];
-                uint maxSameHash = debugResult[1];
-
-                Debug.Log($"Total buckets: {NumHashes}, Used buckets: {usedHashBuckets}, Used rate: {(float)usedHashBuckets / NumHashes * 100}%");
-                Debug.Log($"Avg hash collision: {(float)numParticles / usedHashBuckets}, Max hash collision: {maxSameHash}");
-            }
-            // Debug
-            if (Input.GetKeyDown(KeyCode.C)) {
-                uint[] debugResult = new uint[4];
-
-                int[] values = new int[numParticles * 3];
-
-                hashDebugBuffer.SetData(debugResult);
-
-                solverShader.Dispatch(solverShader.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-
-                hashDebugBuffer.GetData(debugResult);
-
-                uint totalAccessCount = debugResult[2];
-                uint totalNeighborCount = debugResult[3];
-
-                Debug.Log($"Total access: {totalAccessCount}, Avg access: {(float)totalAccessCount / numParticles}, Avg accept: {(float)totalNeighborCount / numParticles}");
-                Debug.Log($"Average accept rate: {(float)totalNeighborCount / totalAccessCount * 100}%");
-
-                hashValueDebugBuffer.GetData(values);
-
-                HashSet<Vector3Int> set = new HashSet<Vector3Int>();
-                for (int i = 0; i < numParticles; i++) {
-                    Vector3Int vi = new Vector3Int(values[i*3+0], values[i*3+1], values[i*3+2]);
-                    set.Add(vi);
-                }
-
-                Debug.Log($"Total unique hash keys: {set.Count}, Ideal bucket load: {(float)set.Count / NumHashes * 100}%");
-            }
-
-    }
-
 
     void Start() {
         Particle[] particles = new Particle[numParticles];
 
         Vector3 origin1 = new Vector3(
-            Mathf.Lerp(minBounds.x, maxBounds.x, 0.25f),
-            Mathf.Lerp(minBounds.y, maxBounds.y, 0.75f),
-            // minBounds.y + initSize * 0.5f,
-            Mathf.Lerp(minBounds.z, maxBounds.z, 0.25f)
+            Mathf.Lerp(minBounds.x, maxBounds.x, 0.3f),
+            Mathf.Lerp(minBounds.y, maxBounds.y, 0.6f),
+            Mathf.Lerp(minBounds.z, maxBounds.z, 0.3f)
         );
         Vector3 origin2 = new Vector3(
-            Mathf.Lerp(minBounds.x, maxBounds.x, 0.75f),
-            Mathf.Lerp(minBounds.y, maxBounds.y, 0.75f),
-            // minBounds.y + initSize * 0.5f,
-            Mathf.Lerp(minBounds.z, maxBounds.z, 0.75f)
+            Mathf.Lerp(minBounds.x, maxBounds.x, 0.7f),
+            Mathf.Lerp(minBounds.y, maxBounds.y, 0.6f),
+            Mathf.Lerp(minBounds.z, maxBounds.z, 0.7f)
         );
 
         for (int i = 0; i < numParticles; i++) {
             Vector3 pos = new Vector3(
-                Random.Range(0f, 1f) * initSize - initSize * 0.5f,
-                Random.Range(0f, 1f) * initSize - initSize * 0.5f,
-                Random.Range(0f, 1f) * initSize - initSize * 0.5f
+                (Random.Range(0f, 1f) - 0.5f) * initSize,
+                (Random.Range(0f, 1f) - 0.5f) * initSize,
+                (Random.Range(0f, 1f) - 0.5f) * initSize
             );
 
-            pos += (i % 2 == 0) ? origin1 : origin2;
+            pos += i % 2 == 0 ? origin1 : origin2;
 
             particles[i].pos = pos;
         }
@@ -182,22 +130,21 @@ public class Solver : MonoBehaviour
         float spiky = 45f / (Mathf.PI * Mathf.Pow(radius, 6f));
         float visco = 45f / (Mathf.PI * Mathf.Pow(radius, 6f));
         
-        
-        solverShader.SetInt("numHash", NumHashes);
-        solverShader.SetInt("numParticles", numParticles);
+        fluidComputer.SetInt("numHash", NumHashes);
+        fluidComputer.SetInt("numParticles", numParticles);
 
-        solverShader.SetFloat("radiusSqr", radius * radius);
-        solverShader.SetFloat("radius", radius);
-        solverShader.SetFloat("gasConst", gasConstant);
-        solverShader.SetFloat("restDensity", restDensity);
-        solverShader.SetFloat("mass", mass);
-        solverShader.SetFloat("viscosity", viscosity);
-        solverShader.SetFloat("gravity", gravity);
-        solverShader.SetFloat("deltaTime", deltaTime);
+        fluidComputer.SetFloat("radiusSqr", radius * radius);
+        fluidComputer.SetFloat("radius", radius);
+        fluidComputer.SetFloat("gasConst", gasConstant);
+        fluidComputer.SetFloat("restDensity", restDensity);
+        fluidComputer.SetFloat("mass", mass);
+        fluidComputer.SetFloat("viscosity", viscosity);
+        fluidComputer.SetFloat("gravity", gravity);
+        fluidComputer.SetFloat("deltaTime", deltaTime);
 
-        solverShader.SetFloat("poly6Coeff", poly6);
-        solverShader.SetFloat("spikyCoeff", spiky);
-        solverShader.SetFloat("viscoCoeff", visco * viscosity);
+        fluidComputer.SetFloat("poly6Coeff", poly6);
+        fluidComputer.SetFloat("spikyCoeff", spiky);
+        fluidComputer.SetFloat("viscoCoeff", visco * viscosity);
 
         boxPlanes[0] = GetPlaneParam(new Vector3(0, minBounds.y, 0), Vector3.up);
         boxPlanes[1] = GetPlaneParam(new Vector3(0, maxBounds.y, 0), Vector3.down);
@@ -231,29 +178,26 @@ public class Solver : MonoBehaviour
 
         meanBuffer = new ComputeBuffer(numParticles, 4 * 4);
         covBuffer = new ComputeBuffer(numParticles, 4 * 3 * 2);
-        principleBuffer = new ComputeBuffer(numParticles * 4, 4 * 3);
         hashRangeBuffer = new ComputeBuffer(NumHashes, 4 * 2);
 
-        for (int i = 0; i < 13; i++) {
-            solverShader.SetBuffer(i, "hashes", hashesBuffer);
-            solverShader.SetBuffer(i, "globalHashCounter", globalHashCounterBuffer);
-            solverShader.SetBuffer(i, "localIndices", localIndicesBuffer);
-            solverShader.SetBuffer(i, "inverseIndices", inverseIndicesBuffer);
-            solverShader.SetBuffer(i, "particles", particlesBuffer);
-            solverShader.SetBuffer(i, "sorted", sortedBuffer);
-            solverShader.SetBuffer(i, "forces", forcesBuffer);
-            solverShader.SetBuffer(i, "groupArr", groupArrBuffer);
-            solverShader.SetBuffer(i, "hashDebug", hashDebugBuffer);
-            solverShader.SetBuffer(i, "mean", meanBuffer);
-            solverShader.SetBuffer(i, "cov", covBuffer);
-            solverShader.SetBuffer(i, "principle", principleBuffer);
-            solverShader.SetBuffer(i, "hashRange", hashRangeBuffer);
-            solverShader.SetBuffer(i, "hashValueDebug", hashValueDebugBuffer);
+        for (int i = 0; i < 12; i++) {
+            fluidComputer.SetBuffer(i, "hashes", hashesBuffer);
+            fluidComputer.SetBuffer(i, "globalHashCounter", globalHashCounterBuffer);
+            fluidComputer.SetBuffer(i, "localIndices", localIndicesBuffer);
+            fluidComputer.SetBuffer(i, "inverseIndices", inverseIndicesBuffer);
+            fluidComputer.SetBuffer(i, "particles", particlesBuffer);
+            fluidComputer.SetBuffer(i, "sorted", sortedBuffer);
+            fluidComputer.SetBuffer(i, "forces", forcesBuffer);
+            fluidComputer.SetBuffer(i, "groupArr", groupArrBuffer);
+            fluidComputer.SetBuffer(i, "hashDebug", hashDebugBuffer);
+            fluidComputer.SetBuffer(i, "mean", meanBuffer);
+            fluidComputer.SetBuffer(i, "cov", covBuffer);
+            fluidComputer.SetBuffer(i, "hashRange", hashRangeBuffer);
+            fluidComputer.SetBuffer(i, "hashValueDebug", hashValueDebugBuffer);
         }
 
-        renderMat.SetBuffer("particles", particlesBuffer);
-        renderMat.SetBuffer("principle", principleBuffer);
-        renderMat.SetFloat("radius", particleRenderSize * 0.5f);
+        fluidMaterial.SetBuffer("particles", particlesBuffer);
+        fluidMaterial.SetFloat("radius", particleRenderSize * 0.5f);
 
         quadInstancedArgsBuffer = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
 
@@ -304,7 +248,7 @@ public class Solver : MonoBehaviour
     void Update() {
         {
             ProcessInput();
-            solverShader.SetVectorArray("planes", CurrPlanes);
+            fluidComputer.SetVectorArray("planes", CurrPlanes);
 
             if (Input.GetMouseButton(0)) {
                 Ray mouseRay = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -315,44 +259,40 @@ public class Solver : MonoBehaviour
                         Mathf.Clamp(hit.point.z, minBounds.z, maxBounds.z)
                     );
 
-                    solverShader.SetInt("moveBeginIndex", moveParticleBeginIndex);
-                    solverShader.SetInt("moveSize", moveParticles);
-                    solverShader.SetVector("movePos", pos);
-                    solverShader.SetVector("moveVel", Vector3.down * 70);
+                    fluidComputer.SetInt("moveBeginIndex", moveParticleBeginIndex);
+                    fluidComputer.SetInt("moveSize", moveParticles);
+                    fluidComputer.SetVector("movePos", pos);
+                    fluidComputer.SetVector("moveVel", Vector3.down * 70);
 
-                    solverShader.Dispatch(solverShader.FindKernel("MoveParticles"), 1, 1, 1);
+                    fluidComputer.Dispatch(fluidComputer.FindKernel("MoveParticles"), 1, 1, 1);
 
                     moveParticleBeginIndex = (moveParticleBeginIndex + moveParticles * moveParticles) % numParticles;
                 }
             }
 
-            renderMat.SetColor("primaryColor", primaryColor.linear);
-            renderMat.SetColor("secondaryColor", secondaryColor.linear);
-
             double solverStart = Time.realtimeSinceStartupAsDouble;
 
-            solverShader.Dispatch(solverShader.FindKernel("ResetCounter"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-            solverShader.Dispatch(solverShader.FindKernel("InsertToBucket"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("ResetCounter"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("InsertToBucket"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
 
             
             
-            solverShader.Dispatch(solverShader.FindKernel("PrefixSum1"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum1"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
 
             // @Important: Because of the way prefix sum algorithm implemented,
             // Currently maximum numHashes value is numThreads^2.
             Debug.Assert(NumHashes <= NumThreads*NumThreads);
-            solverShader.Dispatch(solverShader.FindKernel("PrefixSum2"), 1, 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum2"), 1, 1, 1);
 
-            solverShader.Dispatch(solverShader.FindKernel("PrefixSum3"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-            solverShader.Dispatch(solverShader.FindKernel("Sort"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
-            solverShader.Dispatch(solverShader.FindKernel("CalcHashRange"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum3"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("Sort"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcHashRange"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
 
             if (!paused) {
                 for (int iter = 0; iter < 1; iter++) {
-                    solverShader.Dispatch(solverShader.FindKernel("CalcPressure"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
-                    solverShader.Dispatch(solverShader.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
-                    solverShader.Dispatch(solverShader.FindKernel("CalcPCA"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
-                    solverShader.Dispatch(solverShader.FindKernel("Step"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
+                    fluidComputer.Dispatch(fluidComputer.FindKernel("CalcPressure"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
+                    fluidComputer.Dispatch(fluidComputer.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
+                    fluidComputer.Dispatch(fluidComputer.FindKernel("Step"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
                 }
 
                 solverFrame++;
@@ -380,7 +320,6 @@ public class Solver : MonoBehaviour
 
         // pass 0
         commandBuffer.GetTemporaryRT(worldPosBufferIds[0], Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBFloat);
-        // commandBuffer.GetTemporaryRT(worldPosBufferIds[1], Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBFloat);
 
         int depthId = Shader.PropertyToID("depthBuffer");
         commandBuffer.GetTemporaryRT(depthId, Screen.width, Screen.height, 32, FilterMode.Point, RenderTextureFormat.Depth);
@@ -391,7 +330,7 @@ public class Solver : MonoBehaviour
         commandBuffer.DrawMeshInstancedIndirect(
             sphereMesh,
             0,
-            renderMat,
+            fluidMaterial,
             0,
             sphereInstancedArgsBuffer
         );
@@ -408,7 +347,7 @@ public class Solver : MonoBehaviour
         commandBuffer.DrawMesh(
             screenQuadMesh,
             Matrix4x4.identity,
-            renderMat,
+            fluidMaterial,
             0,
             1
         );
@@ -428,7 +367,7 @@ public class Solver : MonoBehaviour
         commandBuffer.DrawMeshInstancedIndirect(
             particleMesh,
             0,
-            renderMat,
+            fluidMaterial,
             2,
             quadInstancedArgsBuffer
         );
@@ -442,7 +381,7 @@ public class Solver : MonoBehaviour
         commandBuffer.DrawMesh(
             screenQuadMesh,
             Matrix4x4.identity,
-            renderMat,
+            fluidMaterial,
             0,
             3
         );
@@ -453,6 +392,59 @@ public class Solver : MonoBehaviour
 
         Shader.SetGlobalMatrix("inverseV", view.inverse);
         Shader.SetGlobalMatrix("inverseP", Camera.main.projectionMatrix.inverse);
+    }
+    
+    private void ProcessInput()
+    {
+        if (Input.GetKeyDown(KeyCode.X)) {
+            blocked = !blocked;
+        }
+        if (Input.GetKeyDown(KeyCode.Space)) {
+            paused = !paused;
+        }
+        if (Input.GetKeyDown(KeyCode.C)) {
+            uint[] debugResult = new uint[4];
+
+            hashDebugBuffer.SetData(debugResult);
+
+            fluidComputer.Dispatch(fluidComputer.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+
+            hashDebugBuffer.GetData(debugResult);
+
+            uint usedHashBuckets = debugResult[0];
+            uint maxSameHash = debugResult[1];
+
+            Debug.Log($"Total buckets: {NumHashes}, Used buckets: {usedHashBuckets}, Used rate: {(float)usedHashBuckets / NumHashes * 100}%");
+            Debug.Log($"Avg hash collision: {(float)numParticles / usedHashBuckets}, Max hash collision: {maxSameHash}");
+        }
+        // Debug
+        if (Input.GetKeyDown(KeyCode.C)) {
+            uint[] debugResult = new uint[4];
+
+            int[] values = new int[numParticles * 3];
+
+            hashDebugBuffer.SetData(debugResult);
+
+            fluidComputer.Dispatch(fluidComputer.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+
+            hashDebugBuffer.GetData(debugResult);
+
+            uint totalAccessCount = debugResult[2];
+            uint totalNeighborCount = debugResult[3];
+
+            Debug.Log($"Total access: {totalAccessCount}, Avg access: {(float)totalAccessCount / numParticles}, Avg accept: {(float)totalNeighborCount / numParticles}");
+            Debug.Log($"Average accept rate: {(float)totalNeighborCount / totalAccessCount * 100}%");
+
+            hashValueDebugBuffer.GetData(values);
+
+            HashSet<Vector3Int> set = new HashSet<Vector3Int>();
+            for (int i = 0; i < numParticles; i++) {
+                Vector3Int vi = new Vector3Int(values[i*3+0], values[i*3+1], values[i*3+2]);
+                set.Add(vi);
+            }
+
+            Debug.Log($"Total unique hash keys: {set.Count}, Ideal bucket load: {(float)set.Count / NumHashes * 100}%");
+        }
     }
 
     void OnDisable() {
@@ -468,7 +460,6 @@ public class Solver : MonoBehaviour
         hashValueDebugBuffer.Dispose();
         meanBuffer.Dispose();
         covBuffer.Dispose();
-        principleBuffer.Dispose();
         hashRangeBuffer.Dispose();
 
         quadInstancedArgsBuffer.Dispose();

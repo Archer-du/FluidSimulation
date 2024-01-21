@@ -189,8 +189,9 @@ Shader "Spheres"
                 o.rayOrigin = objectSpaceCamera;
                 o.spherePos = float4(spherePos, particles[id].pos.w);
 
-                // @Hardcoded: Range
-                o.densitySpeed = saturate(float2(invlerp(0, 1, o.spherePos.w), invlerp(10, 100, length(particles[id].vel.xyz))));
+                // TODO: config
+                float upperBound = particles[id].vel.y > 0 ? 100 : 600;
+                o.densitySpeed = saturate(float2(invlerp(0, 2, o.spherePos.w), invlerp(10, upperBound, length(particles[id].vel.xyz))));
 
                 return o;
             }
@@ -246,25 +247,20 @@ Shader "Spheres"
                 return o;
             }
 
-            float4 frag(v2f i, out float depth : SV_Depth) : SV_Target
+            float4 frag(v2f i) : SV_Target
             {
-                float d = tex2D(depthBuffer, i.uv);
+                float depth = tex2D(depthBuffer, i.uv);
                 float3 worldPos = tex2D(worldPosBuffer, i.uv).xyz;
                 float4 normal = tex2D(normalBuffer, i.uv);
                 float2 densitySpeed = tex2D(colorBuffer, i.uv);
 
-                if (d == 0) discard;
+                if (depth == 0) discard;
 
                 normal.xyz = normalize(normal.xyz);
                 densitySpeed = normalize(densitySpeed);
 
-                depth = d;
-
                 float3 diffuse = lerp(_PrimaryColor, _SecondaryColor, densitySpeed.x);
                 diffuse = lerp(diffuse, _FoamColor, densitySpeed.y);
-
-                float light = max(dot(normal, _WorldSpaceLightPos0.xyz), 0);
-                light = lerp(0.1, 1, light);
 
                 float3 viewDir = normalize(_WorldSpaceCameraPos.xyz - worldPos);
                 float3 lightDir = _WorldSpaceLightPos0.xyz;
@@ -285,7 +281,6 @@ Shader "Spheres"
 
                 return float4(diffuse, 1);
             }
-
             ENDCG
         }
     }
