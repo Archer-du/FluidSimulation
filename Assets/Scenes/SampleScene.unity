@@ -323,7 +323,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7632611a3bb3d1244804dcbf01056fb5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  numParticles: 2097152
+  numParticles: 1048576
   deltaTime: 0.025
   initSize: 30
   gravity: 10
@@ -333,18 +333,19 @@ MonoBehaviour:
   mass: 0.1
   density: 1
   viscosity: 0.02
-  minBounds: {x: -90, y: 0, z: -60}
-  maxBounds: {x: 100, y: 90, z: 60}
+  minBounds: {x: -80, y: 0, z: -60}
+  maxBounds: {x: 100, y: 80, z: 60}
+  originNormalizedDropPoints:
+  - {x: 0.3, y: 0.6, z: 0.3}
+  - {x: 0.7, y: 0.6, z: 0.7}
   fluidComputer: {fileID: 7200000, guid: f4000e3305ec3b14b8f7b31781bb32dd, type: 3}
-  fluidMaterial: {fileID: 2100000, guid: 6378f3d1b6e448e41ae0a514bce49add, type: 2}
+  moveParticles: 10
   sphereMesh: {fileID: 289301614986012343, guid: e4bf80ccc13306e4597dd4ace78528f5,
     type: 3}
   particleMesh: {fileID: -5495902117074765545, guid: 32591c72e19b392408b392f27e87e875,
     type: 3}
-  particleRenderSize: 0.4
-  primaryColor: {r: 0, g: 0.64705884, b: 0.92156863, a: 1}
-  secondaryColor: {r: 0.043137256, g: 0.22745098, b: 0.50980395, a: 1}
-  moveParticles: 10
+  particleRenderSize: 0.5
+  fluidMaterial: {fileID: 2100000, guid: 6378f3d1b6e448e41ae0a514bce49add, type: 2}
 --- !u!114 &963194230
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -357,6 +358,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 52e35391032640b4ab70cd956b140d49, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  speed: 20
+  sensitivity: 7
 --- !u!1 &2118514187
 GameObject:
   m_ObjectHideFlags: 0

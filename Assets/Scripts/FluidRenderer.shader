@@ -169,7 +169,7 @@ Shader "Spheres"
             };
             
             float invlerp(float a, float b, float t) {
-                return (t-a)/(b-a);
+                return t < a ? 0 : t > b ? 1 : (t-a)/(b-a);
             }
             
             v2f vert (appdata v, uint id : SV_InstanceID)
@@ -191,7 +191,7 @@ Shader "Spheres"
 
                 // TODO: config
                 float upperBound = particles[id].vel.y > 0 ? 100 : 600;
-                o.densitySpeed = saturate(float2(invlerp(0, 2, o.spherePos.w), invlerp(10, upperBound, length(particles[id].vel.xyz))));
+                o.densitySpeed = float2(invlerp(0, 2, o.spherePos.w), invlerp(10, upperBound, length(particles[id].vel.xyz)));
 
                 return o;
             }
@@ -257,8 +257,10 @@ Shader "Spheres"
                 if (depth == 0) discard;
 
                 normal.xyz = normalize(normal.xyz);
+                //TODO
                 densitySpeed = normalize(densitySpeed);
 
+                // 根据物理信息计算水体漫反射颜色
                 float3 diffuse = lerp(_PrimaryColor, _SecondaryColor, densitySpeed.x);
                 diffuse = lerp(diffuse, _FoamColor, densitySpeed.y);
 

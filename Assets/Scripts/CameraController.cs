@@ -2,21 +2,18 @@ using UnityEngine;
 
 public class CameraController : MonoBehaviour
 {
+    public float speed = 20;
+    public float sensitivity = 7;
+    private Camera Cam => Camera.main;
     void Update()
     {
-        Camera cam = Camera.main;
+        Vector3 moveDelta = Cam.transform.forward * Input.GetAxis("Vertical") + Cam.transform.right * Input.GetAxis("Horizontal");
 
-        float speed = 20;
-
-        Vector3 moveDelta = cam.transform.forward * Input.GetAxis("Vertical") + cam.transform.right * Input.GetAxis("Horizontal");
-
-        cam.transform.position += moveDelta * (speed * Time.deltaTime);
+        Cam.transform.position += moveDelta * (speed * Time.deltaTime);
 
         if (Input.GetMouseButton(1)) {
-            float sensitivity = 7;
-
-            cam.transform.Rotate(new Vector3(-Input.GetAxis("Mouse Y"), 0, 0) * sensitivity, Space.Self);
-            cam.transform.Rotate(new Vector3(0, Input.GetAxis("Mouse X"), 0) * sensitivity, Space.World);
+            Cam.transform.Rotate(new Vector3(-Input.GetAxis("Mouse Y"), 0, 0) * sensitivity, Space.Self);
+            Cam.transform.Rotate(new Vector3(0, Input.GetAxis("Mouse X"), 0) * sensitivity, Space.World);
         }
     }
 }

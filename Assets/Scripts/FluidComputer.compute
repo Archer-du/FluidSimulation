@@ -22,9 +22,9 @@
 
 float3 gridScale;
 float3 gridOffset;
-uint numHash; // Should be power of two.
+uint numHash;
 
-// with density as w component.
+// w分量是密度
 struct Particle {
     float4 pos;
     float4 vel;
@@ -99,8 +99,6 @@ float isotropic(float d) {
 
 void checkPlane(float4 plane, inout float3 pos, inout float3 vel) {
     const float eps = 0.001;
-    const float damping = 0.5;
-
     float3 planePoint;
     if (plane.x != 0)       planePoint = float3(-plane.w / plane.x, 0, 0);
     else if (plane.y != 0)  planePoint = float3(0, -plane.w / plane.y, 0);
@@ -138,8 +136,6 @@ for (uint3 dxyz = 0; dxyz.x < (GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)*(GRI
 [numthreads(1024,1,1)]
 void MoveParticles (uint3 id : SV_DispatchThreadID)
 {
-    uint totalParticlesToMove = moveSize * moveSize;
-
     const float moveAreaSize = 5.0;
 
     for (uint x = 0; x < moveSize; x++) {
@@ -251,8 +247,6 @@ void CalcPressure (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numParticles) {
         Particle pi = sorted[id.x];
-
-        // float density = mass * poly6(0);
         float density = 0;
         float4 m = 0;
 
@@ -334,8 +328,6 @@ void Step (uint3 id : SV_DispatchThreadID)
         pi.vel.xyz += currAcc * deltaTime;
 
         pi.pos.xyz += pi.vel.xyz * deltaTime;
-
-        // particles[inverseIndices[id.x]] = pi;
         particles[id.x] = pi;
     }
 }
