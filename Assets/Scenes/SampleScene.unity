@@ -210,13 +210,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 705507993}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
-  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalRotation: {x: 0.75175273, y: -0.5604865, z: -0.041615836, w: 0.3449506}
+  m_LocalPosition: {x: -64.7, y: 89, z: 242.5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+  m_LocalEulerAnglesHint: {x: 151.837, y: 30.636002, z: 81.275}
 --- !u!1 &963194225
 GameObject:
   m_ObjectHideFlags: 0
@@ -334,12 +334,12 @@ MonoBehaviour:
   density: 1
   viscosity: 0.02
   minBounds: {x: -80, y: 0, z: -60}
-  maxBounds: {x: 100, y: 80, z: 60}
+  maxBounds: {x: 80, y: 100, z: 60}
   originNormalizedDropPoints:
-  - {x: 0.3, y: 0.6, z: 0.3}
-  - {x: 0.7, y: 0.6, z: 0.7}
+  - {x: 0.3, y: 0.75, z: 0.3}
+  - {x: 0.7, y: 0.5, z: 0.7}
   fluidComputer: {fileID: 7200000, guid: f4000e3305ec3b14b8f7b31781bb32dd, type: 3}
-  moveParticles: 10
+  moveParticles: 32
   sphereMesh: {fileID: 289301614986012343, guid: e4bf80ccc13306e4597dd4ace78528f5,
     type: 3}
   particleMesh: {fileID: -5495902117074765545, guid: 32591c72e19b392408b392f27e87e875,

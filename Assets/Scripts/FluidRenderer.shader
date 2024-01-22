@@ -32,8 +32,6 @@ Shader "Spheres"
 
             float radius;
 
-            StructuredBuffer<float3> principle;
-
             struct appdata
             {
                 float4 vertex : POSITION;
@@ -63,7 +61,7 @@ Shader "Spheres"
             ENDCG
         }
 
-        // pass 1: 
+        // pass 1: 输出世界坐标缓冲
         Pass
         {
             ZTest Always
@@ -96,17 +94,14 @@ Shader "Spheres"
             {
                 v2f o;
                 o.vertex = v.vertex;
-                o.vertex.z = 0.5f;
                 o.uv = v.uv;
                 return o;
             }
 
-            float4 frag(v2f i, out float depth : SV_Depth) : SV_Target
+            float4 frag(v2f i) : SV_Target
             {
                 float d = tex2D(depthBuffer, i.uv);
-                depth = d;
 
-                // Calculate world-space position.
                 float3 viewSpaceRayDir = normalize(mul(inverseP, float4(i.uv*2-1, 0, 1)).xyz);
                 float viewSpaceDistance = LinearEyeDepth(d) / dot(viewSpaceRayDir, float3(0,0,-1));
 
@@ -119,7 +114,7 @@ Shader "Spheres"
             ENDCG
         }
 
-        // pass 2
+        // pass 2: 输出法向缓冲和密度速度纹理
         Pass
         {
             ZTest Less
@@ -142,23 +137,20 @@ Shader "Spheres"
 
             float radius;
 
-            StructuredBuffer<float3> principle;
-
-            sampler2D worldPosBuffer;
-
             struct appdata
             {
                 float4 vertex : POSITION;
                 float3 normal : NORMAL;
             };
 
+            float invlerp(float a, float b, float t) {
+                return (t-a)/(b-a);
+            }
+            
             struct v2f
             {
                 float4 vertex : SV_POSITION;
                 float3 normal : NORMAL;
-                float4 rayDir : TEXCOORD0;
-                float3 rayOrigin: TEXCOORD1;
-                float4 spherePos : TEXCOORD2;
                 float2 densitySpeed : TEXCOORD3;
             };
 
@@ -167,10 +159,6 @@ Shader "Spheres"
                 float4 normal : SV_Target0;
                 float2 densitySpeed : SV_Target1;
             };
-            
-            float invlerp(float a, float b, float t) {
-                return t < a ? 0 : t > b ? 1 : (t-a)/(b-a);
-            }
             
             v2f vert (appdata v, uint id : SV_InstanceID)
             {
@@ -183,15 +171,9 @@ Shader "Spheres"
                 o.vertex = mul(UNITY_MATRIX_VP, float4(worldPos, 1));
                 o.normal = UnityObjectToWorldNormal(v.normal);
                 
-                float3 objectSpaceCamera = _WorldSpaceCameraPos.xyz - spherePos;
-                // @Temp: Actually it's screen-space uv.
-                o.rayDir = ComputeScreenPos(o.vertex);
-                o.rayOrigin = objectSpaceCamera;
-                o.spherePos = float4(spherePos, particles[id].pos.w);
-
                 // TODO: config
                 float upperBound = particles[id].vel.y > 0 ? 100 : 600;
-                o.densitySpeed = float2(invlerp(0, 2, o.spherePos.w), invlerp(10, upperBound, length(particles[id].vel.xyz)));
+                o.densitySpeed = saturate(float2(invlerp(0, 2, particles[id].pos.w), invlerp(10, upperBound, length(particles[id].vel.xyz))));
 
                 return o;
             }
@@ -251,26 +233,29 @@ Shader "Spheres"
             {
                 float depth = tex2D(depthBuffer, i.uv);
                 float3 worldPos = tex2D(worldPosBuffer, i.uv).xyz;
-                float4 normal = tex2D(normalBuffer, i.uv);
+                float3 normal = tex2D(normalBuffer, i.uv);
                 float2 densitySpeed = tex2D(colorBuffer, i.uv);
 
                 if (depth == 0) discard;
 
-                normal.xyz = normalize(normal.xyz);
                 //TODO
+                normal = normalize(normal);
                 densitySpeed = normalize(densitySpeed);
 
+                float3 lightDir = _WorldSpaceLightPos0.xyz;
+                
                 // 根据物理信息计算水体漫反射颜色
-                float3 diffuse = lerp(_PrimaryColor, _SecondaryColor, densitySpeed.x);
-                diffuse = lerp(diffuse, _FoamColor, densitySpeed.y);
+                float3 ambient = lerp(_PrimaryColor, _FoamColor, densitySpeed.y);
+                float3 diffuse = lerp(_PrimaryColor, _SecondaryColor, max(dot(normal, lightDir), 0));
 
                 float3 viewDir = normalize(_WorldSpaceCameraPos.xyz - worldPos);
-                float3 lightDir = _WorldSpaceLightPos0.xyz;
-                float3 mid = normalize(viewDir + lightDir);
+                float3 reflectDir = reflect(-lightDir, normal);
 
-                // Specular highlight
-                diffuse += pow(max(dot(normal, mid), 0), _PhongExponent) * _SpecularColor;
-
+                float3 result = ambient + diffuse;
+                // 镜面高光
+                float3 specular = pow(max(dot(viewDir, reflectDir), 0), _PhongExponent) * _SpecularColor;
+                result += specular;
+                
                 float4 reflectedColor = texCUBE(_EnvMap, reflect(-viewDir, normal));
 
                 // Schlick's approximation
@@ -279,9 +264,9 @@ Shader "Spheres"
                 float r0 = pow((iorAir - iorWater) / (iorAir + iorWater), 2);
                 float rTheta = r0 + (1 - r0) * pow(1 - max(dot(viewDir, normal), 0), 5);
 
-                diffuse = lerp(diffuse, reflectedColor, rTheta);
+                result = lerp(result, reflectedColor, rTheta);
 
-                return float4(diffuse, 1);
+                return float4(result, 1);
             }
             ENDCG
         }

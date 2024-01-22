@@ -12,12 +12,8 @@
 #pragma kernel Step
 
 #define PI 3.1415926535
-#define THREADS 1024
+#define THREAD_NUM 1024
 
-// 2 is the optimal value, according to my experiment.
-// If this value is too small, the number of particles per one grid cell increases. (Inefficient)
-// If this value is too large, the number of grid cells to check increases. (Overhead)
-// Also note that, unrolling all three loops make the performance worse! (Why?)
 #define GRIDS_PER_DIAMETER    2
 
 float3 gridScale;
@@ -37,9 +33,9 @@ RWStructuredBuffer<uint> inverseIndices;
 // 粒子数量
 uint numParticles;
 
-float radiusSqr;
 // 相邻粒子判定半径
 float radius;
+float radiusSqr;
 
 float gasConst;
 float restDensity;
@@ -133,24 +129,24 @@ for (uint3 dxyz = 0; dxyz.x < (GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)*(GRI
 
 
 
-[numthreads(1024,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void MoveParticles (uint3 id : SV_DispatchThreadID)
 {
-    const float moveAreaSize = 5.0;
+    const float moveAreaSize = 20.0;
 
     for (uint x = 0; x < moveSize; x++) {
         for (uint y = 0; y < moveSize; y++) {
             uint idx = (moveBeginIndex + x * moveSize + y) % numParticles;
 
             particles[idx].pos.xyz = movePos + float3(x, 0, y) / moveSize * moveAreaSize - float3(1, 0, 1) * moveAreaSize * 0.5;
-            particles[idx].vel.xyz = moveVel;
+            particles[idx].vel.xyz = 0;
 
             forces[idx] = 0;
         }
     }
 }
 
-[numthreads(1024,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void ResetCounter (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numHash) {
@@ -158,22 +154,8 @@ void ResetCounter (uint3 id : SV_DispatchThreadID)
     }
 }
 
-[numthreads(1024,1,1)]
-void InsertToBucket (uint3 id : SV_DispatchThreadID)
-{
-    if (id.x < numParticles) {
-        int3 normed = floor(GRIDS_PER_DIAMETER/2.0 * (particles[id.x].pos.xyz / radius));
-        uint h = calculateHash(normed);
-        hashes[id.x] = h;
 
-        uint localIndex;
-        InterlockedAdd(globalHashCounter[h], 1, localIndex);
-
-        localIndices[id.x] = localIndex;
-    }
-}
-
-[numthreads(1024,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void DebugHash (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numHash) {
@@ -212,7 +194,33 @@ void DebugHash (uint3 id : SV_DispatchThreadID)
     }
 }
 
-[numthreads(1024,1,1)]
+[numthreads(THREAD_NUM,1,1)]
+void CalcHashRange (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numHash) {
+        uint begin = id.x ? globalHashCounter[id.x-1] : 0;
+        uint end = globalHashCounter[id.x];
+        hashRange[id.x] = uint2(begin, end);
+    }
+}
+
+
+[numthreads(THREAD_NUM,1,1)]
+void InsertToBucket (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles) {
+        int3 normed = floor(GRIDS_PER_DIAMETER/2.0 * (particles[id.x].pos.xyz / radius));
+        uint h = calculateHash(normed);
+        hashes[id.x] = h;
+
+        uint localIndex;
+        InterlockedAdd(globalHashCounter[h], 1, localIndex);
+
+        localIndices[id.x] = localIndex;
+    }
+}
+
+[numthreads(THREAD_NUM,1,1)]
 void Sort (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numParticles) {
@@ -228,17 +236,6 @@ void Sort (uint3 id : SV_DispatchThreadID)
         inverseIndices[sortedIndex] = id.x;
     }
 }
-
-[numthreads(1024,1,1)]
-void CalcHashRange (uint3 id : SV_DispatchThreadID)
-{
-    if (id.x < numHash) {
-        uint begin = id.x ? globalHashCounter[id.x-1] : 0;
-        uint end = globalHashCounter[id.x];
-        hashRange[id.x] = uint2(begin, end);
-    }
-}
-
 
 
 
@@ -263,7 +260,7 @@ void CalcPressure (uint3 id : SV_DispatchThreadID)
         mean[id.x] = m;
 
         sorted[id.x].pos.w = density;
-        // Clamp negative pressure. This happens when a particle has a few neighbors.
+        // Clamp negative pressure. 邻居太少
         sorted[id.x].vel.w = max(gasConst * (density - restDensity), 0);
     }
 }
@@ -312,7 +309,7 @@ void CalcForces (uint3 id : SV_DispatchThreadID)
 }
 
 
-[numthreads(1024,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void Step (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numParticles) {

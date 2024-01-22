@@ -136,42 +136,105 @@ public class FluidRenderController : MonoBehaviour
         ProcessInput();
 
         fluidComputer.Dispatch(fluidComputer.FindKernel("ResetCounter"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
+
         fluidComputer.Dispatch(fluidComputer.FindKernel("InsertToBucket"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
-
         fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum1"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-
-        // @Important: Because of the way prefix sum algorithm implemented,
-        // Currently maximum numHashes value is numThreads^2.
         Debug.Assert(NumHashes <= NumThreads*NumThreads);
         fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum2"), 1, 1, 1);
-
         fluidComputer.Dispatch(fluidComputer.FindKernel("PrefixSum3"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
         fluidComputer.Dispatch(fluidComputer.FindKernel("Sort"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
+        
         fluidComputer.Dispatch(fluidComputer.FindKernel("CalcHashRange"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
 
         if (!paused) {
-            for (int iter = 0; iter < 1; iter++) {
-                fluidComputer.Dispatch(fluidComputer.FindKernel("CalcPressure"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
-                fluidComputer.Dispatch(fluidComputer.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
-                fluidComputer.Dispatch(fluidComputer.FindKernel("Step"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
-            }
+            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcPressure"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("Step"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
 
             solverFrame++;
-
             if (solverFrame > 1) {
                 totalFrameTime += Time.realtimeSinceStartupAsDouble - lastFrameTimestamp;
             }
-
-            if (solverFrame == 400 || solverFrame == 1200) {
-                Debug.Log($"Avg frame time at #{solverFrame}: {totalFrameTime / (solverFrame-1) * 1000}ms.");
+            if (solverFrame % 500 == 250) {
+                Debug.Log($"平均FPS #{solverFrame}: {(solverFrame-1) / totalFrameTime}.");
             }
         }
-
         lastFrameTimestamp = Time.realtimeSinceStartupAsDouble;
     }
     void LateUpdate() {
         Shader.SetGlobalMatrix("inverseV", Cam.worldToCameraMatrix.inverse);
         Shader.SetGlobalMatrix("inverseP", Cam.projectionMatrix.inverse);
+    }
+    private void InitCommandBuffer() {
+        commandBuffer.Clear();
+
+        int worldPosBufferId = Shader.PropertyToID("worldPosBuffer");
+        // pass 0
+        commandBuffer.GetTemporaryRT(worldPosBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBFloat);
+
+        int depthId = Shader.PropertyToID("depthBuffer");
+        commandBuffer.GetTemporaryRT(depthId, Screen.width, Screen.height, 32, FilterMode.Point, RenderTextureFormat.Depth);
+
+        commandBuffer.SetRenderTarget((RenderTargetIdentifier)worldPosBufferId, (RenderTargetIdentifier)depthId);
+        commandBuffer.ClearRenderTarget(true, true, Color.clear);
+
+        commandBuffer.DrawMeshInstancedIndirect(
+            sphereMesh,
+            0,
+            fluidMaterial,
+            0,
+            sphereInstancedArgsBuffer
+        );
+
+        //pass 1
+        int depth2Id = Shader.PropertyToID("depth2Buffer");
+        commandBuffer.GetTemporaryRT(depth2Id, Screen.width, Screen.height, 32, FilterMode.Point, RenderTextureFormat.Depth);
+
+        commandBuffer.SetRenderTarget((RenderTargetIdentifier)worldPosBufferId, (RenderTargetIdentifier)depth2Id);
+        commandBuffer.ClearRenderTarget(true, true, Color.clear);
+
+        commandBuffer.SetGlobalTexture("depthBuffer", depthId);
+
+        commandBuffer.DrawMesh(
+            screenQuadMesh,
+            Matrix4x4.identity,
+            fluidMaterial,
+            0,
+            1
+        );
+        
+        //pass 2
+        int normalBufferId = Shader.PropertyToID("normalBuffer");
+        commandBuffer.GetTemporaryRT(normalBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBHalf);
+
+        int colorBufferId = Shader.PropertyToID("colorBuffer");
+        commandBuffer.GetTemporaryRT(colorBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.RGHalf);
+
+        commandBuffer.SetRenderTarget(new RenderTargetIdentifier[] { normalBufferId, colorBufferId }, (RenderTargetIdentifier)depthId);
+        commandBuffer.ClearRenderTarget(false, true, Color.clear);
+
+        commandBuffer.DrawMeshInstancedIndirect(
+            particleMesh,
+            0,
+            fluidMaterial,
+            2,
+            quadInstancedArgsBuffer
+        );
+        
+        //pass 3
+        commandBuffer.SetGlobalTexture("worldPosBuffer", worldPosBufferId);
+        commandBuffer.SetGlobalTexture("normalBuffer", normalBufferId);
+        commandBuffer.SetGlobalTexture("colorBuffer", colorBufferId);
+
+        commandBuffer.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
+
+        commandBuffer.DrawMesh(
+            screenQuadMesh,
+            Matrix4x4.identity,
+            fluidMaterial,
+            0,
+            3
+        );
     }
 
     
@@ -319,78 +382,6 @@ public class FluidRenderController : MonoBehaviour
         InitCommandBuffer();
         Cam.AddCommandBuffer(CameraEvent.AfterForwardAlpha, commandBuffer);
     }
-    private void InitCommandBuffer() {
-        commandBuffer.Clear();
-
-        int worldPosBufferId = Shader.PropertyToID("worldPosBuffer");
-        // pass 0
-        commandBuffer.GetTemporaryRT(worldPosBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBFloat);
-
-        int depthId = Shader.PropertyToID("depthBuffer");
-        commandBuffer.GetTemporaryRT(depthId, Screen.width, Screen.height, 32, FilterMode.Point, RenderTextureFormat.Depth);
-
-        commandBuffer.SetRenderTarget((RenderTargetIdentifier)worldPosBufferId, (RenderTargetIdentifier)depthId);
-        commandBuffer.ClearRenderTarget(true, true, Color.clear);
-
-        commandBuffer.DrawMeshInstancedIndirect(
-            sphereMesh,
-            0,
-            fluidMaterial,
-            0,
-            sphereInstancedArgsBuffer
-        );
-
-        //pass 1
-        int depth2Id = Shader.PropertyToID("depth2Buffer");
-        commandBuffer.GetTemporaryRT(depth2Id, Screen.width, Screen.height, 32, FilterMode.Point, RenderTextureFormat.Depth);
-
-        commandBuffer.SetRenderTarget((RenderTargetIdentifier)worldPosBufferId, (RenderTargetIdentifier)depth2Id);
-        commandBuffer.ClearRenderTarget(true, true, Color.clear);
-
-        commandBuffer.SetGlobalTexture("depthBuffer", depthId);
-
-        commandBuffer.DrawMesh(
-            screenQuadMesh,
-            Matrix4x4.identity,
-            fluidMaterial,
-            0,
-            1
-        );
-        
-        //pass 2
-        int normalBufferId = Shader.PropertyToID("normalBuffer");
-        commandBuffer.GetTemporaryRT(normalBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.ARGBHalf);
-
-        int colorBufferId = Shader.PropertyToID("colorBuffer");
-        commandBuffer.GetTemporaryRT(colorBufferId, Screen.width, Screen.height, 0, FilterMode.Point, RenderTextureFormat.RGHalf);
-
-        commandBuffer.SetRenderTarget(new RenderTargetIdentifier[] { normalBufferId, colorBufferId }, (RenderTargetIdentifier)depthId);
-        commandBuffer.ClearRenderTarget(false, true, Color.clear);
-
-        commandBuffer.SetGlobalTexture("worldPosBuffer", worldPosBufferId);
-
-        commandBuffer.DrawMeshInstancedIndirect(
-            particleMesh,
-            0,
-            fluidMaterial,
-            2,
-            quadInstancedArgsBuffer
-        );
-        
-        //pass 3
-        commandBuffer.SetGlobalTexture("normalBuffer", normalBufferId);
-        commandBuffer.SetGlobalTexture("colorBuffer", colorBufferId);
-
-        commandBuffer.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
-
-        commandBuffer.DrawMesh(
-            screenQuadMesh,
-            Matrix4x4.identity,
-            fluidMaterial,
-            0,
-            3
-        );
-    }
     
     
     private void ProcessInput()
@@ -402,27 +393,27 @@ public class FluidRenderController : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Space)) {
             paused = !paused;
         }
-        if (Input.GetMouseButton(0)) {
-            Ray mouseRay = Cam.ScreenPointToRay(Input.mousePosition);
-            if (Physics.Raycast(mouseRay, out RaycastHit hit)) {
-                Vector3 pos = new Vector3(
-                    Mathf.Clamp(hit.point.x, minBounds.x, maxBounds.x),
-                    maxBounds.y - 1f,
-                    Mathf.Clamp(hit.point.z, minBounds.z, maxBounds.z)
-                );
+        // if (Input.GetMouseButton(0)) {
+        //     Ray mouseRay = Cam.ScreenPointToRay(Input.mousePosition);
+        //     if (Physics.Raycast(mouseRay, out RaycastHit hit)) {
+        //         Vector3 pos = new Vector3(
+        //             Mathf.Clamp(hit.point.x, minBounds.x, maxBounds.x),
+        //             maxBounds.y - 1f,
+        //             Mathf.Clamp(hit.point.z, minBounds.z, maxBounds.z)
+        //         );
+        //
+        //         fluidComputer.SetInt("moveBeginIndex", moveParticleBeginIndex);
+        //         fluidComputer.SetInt("moveSize", moveParticles);
+        //         fluidComputer.SetVector("movePos", pos);
+        //         fluidComputer.SetVector("moveVel", Vector3.down * 70);
+        //
+        //         fluidComputer.Dispatch(fluidComputer.FindKernel("MoveParticles"), 1, 1, 1);
+        //
+        //         moveParticleBeginIndex = (moveParticleBeginIndex + moveParticles * moveParticles) % numParticles;
+        //     }
+        // }
 
-                fluidComputer.SetInt("moveBeginIndex", moveParticleBeginIndex);
-                fluidComputer.SetInt("moveSize", moveParticles);
-                fluidComputer.SetVector("movePos", pos);
-                fluidComputer.SetVector("moveVel", Vector3.down * 70);
-
-                fluidComputer.Dispatch(fluidComputer.FindKernel("MoveParticles"), 1, 1, 1);
-
-                moveParticleBeginIndex = (moveParticleBeginIndex + moveParticles * moveParticles) % numParticles;
-            }
-        }
-
-        
+        // debug
         if (Input.GetKeyDown(KeyCode.C)) {
             uint[] debugResult = new uint[4];
 

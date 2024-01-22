@@ -10,19 +10,19 @@ RWStructuredBuffer<uint> PREFIX_SUM_ARRAY_NAME;
 RWStructuredBuffer<uint> groupArr;
 
 // Make it power of two.
-#define THREADS 1024
+#define THREAD_NUM 1024
 
 // Double buffered
-groupshared uint tmp[THREADS*2];
+groupshared uint tmp[THREAD_NUM*2];
 
 // Calculate prefix sum for each groups.
-[numthreads(THREADS,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void PrefixSum1 (uint3 id : SV_DispatchThreadID)
 {
     uint length, stride;
     PREFIX_SUM_ARRAY_NAME.GetDimensions(length, stride);
 
-    uint localIndex = id.x & (THREADS-1);
+    uint localIndex = id.x & (THREAD_NUM-1);
     if (id.x < length) {
         // Copy data to groupshared memory.
         tmp[localIndex] = PREFIX_SUM_ARRAY_NAME[id.x];
@@ -31,13 +31,13 @@ void PrefixSum1 (uint3 id : SV_DispatchThreadID)
     GroupMemoryBarrierWithGroupSync();
 
     uint bufferIndex = 0;
-    for (uint i = 1; i < THREADS; i <<= 1) {
+    for (uint i = 1; i < THREAD_NUM; i <<= 1) {
         if (id.x < length) {
             if (localIndex >= i) {
-                tmp[localIndex + (bufferIndex^1) * THREADS] = tmp[(localIndex-i) + bufferIndex * THREADS] + tmp[localIndex + bufferIndex * THREADS];
+                tmp[localIndex + (bufferIndex^1) * THREAD_NUM] = tmp[(localIndex-i) + bufferIndex * THREAD_NUM] + tmp[localIndex + bufferIndex * THREAD_NUM];
             }
             else {
-                tmp[localIndex + (bufferIndex^1) * THREADS] = tmp[localIndex + bufferIndex * THREADS];
+                tmp[localIndex + (bufferIndex^1) * THREAD_NUM] = tmp[localIndex + bufferIndex * THREAD_NUM];
             }
         }
         bufferIndex ^= 1;
@@ -47,33 +47,33 @@ void PrefixSum1 (uint3 id : SV_DispatchThreadID)
 
     // Write results.
     if (id.x < length) {
-        PREFIX_SUM_ARRAY_NAME[id.x] = tmp[localIndex + bufferIndex * THREADS];
+        PREFIX_SUM_ARRAY_NAME[id.x] = tmp[localIndex + bufferIndex * THREAD_NUM];
     }
 }
 
 // Calculate prefix sum for sum of each groups.
-[numthreads(THREADS,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void PrefixSum2 (uint3 id : SV_DispatchThreadID)
 {
     uint length, stride;
     groupArr.GetDimensions(length, stride);
 
-    uint localIndex = id.x & (THREADS-1);
+    uint localIndex = id.x & (THREAD_NUM-1);
     if (id.x < length) {
         // Copy data to groupshared memory.
-        tmp[localIndex] = PREFIX_SUM_ARRAY_NAME[id.x * THREADS + (THREADS-1)];
+        tmp[localIndex] = PREFIX_SUM_ARRAY_NAME[id.x * THREAD_NUM + (THREAD_NUM-1)];
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     uint bufferIndex = 0;
-    for (uint i = 1; i < THREADS; i <<= 1) {
+    for (uint i = 1; i < THREAD_NUM; i <<= 1) {
         if (id.x < length) {
             if (localIndex >= i) {
-                tmp[localIndex + (bufferIndex^1) * THREADS] = tmp[(localIndex-i) + bufferIndex * THREADS] + tmp[localIndex + bufferIndex * THREADS];
+                tmp[localIndex + (bufferIndex^1) * THREAD_NUM] = tmp[(localIndex-i) + bufferIndex * THREAD_NUM] + tmp[localIndex + bufferIndex * THREAD_NUM];
             }
             else {
-                tmp[localIndex + (bufferIndex^1) * THREADS] = tmp[localIndex + bufferIndex * THREADS];
+                tmp[localIndex + (bufferIndex^1) * THREAD_NUM] = tmp[localIndex + bufferIndex * THREAD_NUM];
             }
         }
         bufferIndex ^= 1;
@@ -83,20 +83,20 @@ void PrefixSum2 (uint3 id : SV_DispatchThreadID)
 
     // Write results.
     if (id.x < length) {
-        groupArr[id.x] = tmp[localIndex + bufferIndex * THREADS];
+        groupArr[id.x] = tmp[localIndex + bufferIndex * THREAD_NUM];
     }
 }
 
 // Add offset to each groups and finalize the results.
-[numthreads(THREADS,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void PrefixSum3 (uint3 id : SV_DispatchThreadID)
 {
     uint length, stride;
     PREFIX_SUM_ARRAY_NAME.GetDimensions(length, stride);
 
     if (id.x < length) {
-        if (id.x >= THREADS) {
-            PREFIX_SUM_ARRAY_NAME[id.x] += groupArr[id.x / THREADS - 1];
+        if (id.x >= THREAD_NUM) {
+            PREFIX_SUM_ARRAY_NAME[id.x] += groupArr[id.x / THREAD_NUM - 1];
         }
     }
 }
