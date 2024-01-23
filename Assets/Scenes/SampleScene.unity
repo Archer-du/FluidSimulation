@@ -339,7 +339,6 @@ MonoBehaviour:
   - {x: 0.3, y: 0.75, z: 0.3}
   - {x: 0.7, y: 0.5, z: 0.7}
   fluidComputer: {fileID: 7200000, guid: f4000e3305ec3b14b8f7b31781bb32dd, type: 3}
-  moveParticles: 32
   sphereMesh: {fileID: 289301614986012343, guid: e4bf80ccc13306e4597dd4ace78528f5,
     type: 3}
   particleMesh: {fileID: -5495902117074765545, guid: 32591c72e19b392408b392f27e87e875,

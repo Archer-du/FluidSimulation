@@ -16,7 +16,7 @@ public class FluidRenderController : MonoBehaviour
     /// <summary>
     /// compute shader kernel函数数量
     /// </summary>
-    private const int KernelNum = 12;
+    private const int KernelNum = 11;
     
     /// <summary>
     /// 线程组大小
@@ -48,8 +48,6 @@ public class FluidRenderController : MonoBehaviour
     public float density = 1;
     public float viscosity = 0.01f;
     
-    private int moveParticleBeginIndex = 0;
-
     // 物理边界
     public Vector3 minBounds = new Vector3(-10, -10, -10);
     public Vector3 maxBounds = new Vector3(10, 10, 10);
@@ -64,8 +62,6 @@ public class FluidRenderController : MonoBehaviour
     /// </summary>
     public ComputeShader fluidComputer;
 
-    public int moveParticles = 10;
-
     private ComputeBuffer hashesBuffer;
     private ComputeBuffer globalHashCounterBuffer;
     private ComputeBuffer localIndicesBuffer;
@@ -76,8 +72,6 @@ public class FluidRenderController : MonoBehaviour
     private ComputeBuffer groupArrBuffer;
     private ComputeBuffer hashDebugBuffer;
     private ComputeBuffer hashValueDebugBuffer;
-    private ComputeBuffer meanBuffer;
-    private ComputeBuffer covBuffer;
     private ComputeBuffer hashRangeBuffer;
     
     
@@ -126,6 +120,41 @@ public class FluidRenderController : MonoBehaviour
 
     void Start() 
     {
+        // 设置粒子初始位置
+        Particle[] particles = new Particle[numParticles];
+        Vector3[] origins = new Vector3[originNormalizedDropPoints.Length];
+
+        for (int i = 0; i < originNormalizedDropPoints.Length; i++)
+        {
+            origins[i] = new Vector3(
+                Mathf.Lerp(minBounds.x, maxBounds.x, originNormalizedDropPoints[i].x),
+                Mathf.Lerp(minBounds.y, maxBounds.y, originNormalizedDropPoints[i].y),
+                Mathf.Lerp(minBounds.z, maxBounds.z, originNormalizedDropPoints[i].z)
+            );
+        }
+        for (int i = 0; i < numParticles; i++) {
+            Vector3 pos = new Vector3(
+                (Random.Range(0f, 1f) - 0.5f) * initSize,
+                (Random.Range(0f, 1f) - 0.5f) * initSize,
+                (Random.Range(0f, 1f) - 0.5f) * initSize
+            );
+
+            pos += origins[i % originNormalizedDropPoints.Length];
+            particles[i].pos = pos;
+        }
+        hashesBuffer            = new ComputeBuffer(numParticles, 4);
+        globalHashCounterBuffer = new ComputeBuffer(NumHashes, 4);
+        localIndicesBuffer      = new ComputeBuffer(numParticles, 4);
+        inverseIndicesBuffer    = new ComputeBuffer(numParticles, 4);
+        particlesBuffer         = new ComputeBuffer(numParticles, 4 * 8);
+        particlesBuffer.SetData(particles);
+        sortedBuffer            = new ComputeBuffer(numParticles, 4 * 8);
+        forcesBuffer            = new ComputeBuffer(numParticles * 2, 4 * 4);
+        int groupArrLen = Mathf.CeilToInt(NumHashes / 1024f);
+        groupArrBuffer          = new ComputeBuffer(groupArrLen, 4);
+        hashDebugBuffer         = new ComputeBuffer(4, 4);
+        hashValueDebugBuffer    = new ComputeBuffer(numParticles, 4 * 3);
+        hashRangeBuffer         = new ComputeBuffer(NumHashes, 4 * 2);
         SetPhysicsArgs();
         SetRenderArgs();
     }
@@ -147,8 +176,8 @@ public class FluidRenderController : MonoBehaviour
         fluidComputer.Dispatch(fluidComputer.FindKernel("CalcHashRange"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
 
         if (!paused) {
-            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcPressure"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
-            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / 128), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcDensity"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
+            fluidComputer.Dispatch(fluidComputer.FindKernel("CalcForces"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
             fluidComputer.Dispatch(fluidComputer.FindKernel("Step"), Mathf.CeilToInt((float)numParticles / NumThreads), 1, 1);
 
             solverFrame++;
@@ -243,30 +272,6 @@ public class FluidRenderController : MonoBehaviour
     /// </summary>
     private void SetPhysicsArgs()
     {
-        // 设置粒子初始位置
-        Particle[] particles = new Particle[numParticles];
-        Vector3[] origins = new Vector3[originNormalizedDropPoints.Length];
-
-        for (int i = 0; i < originNormalizedDropPoints.Length; i++)
-        {
-            origins[i] = new Vector3(
-                Mathf.Lerp(minBounds.x, maxBounds.x, originNormalizedDropPoints[i].x),
-                Mathf.Lerp(minBounds.y, maxBounds.y, originNormalizedDropPoints[i].y),
-                Mathf.Lerp(minBounds.z, maxBounds.z, originNormalizedDropPoints[i].z)
-            );
-        }
-        for (int i = 0; i < numParticles; i++) {
-            Vector3 pos = new Vector3(
-                (Random.Range(0f, 1f) - 0.5f) * initSize,
-                (Random.Range(0f, 1f) - 0.5f) * initSize,
-                (Random.Range(0f, 1f) - 0.5f) * initSize
-            );
-
-            pos += origins[i % originNormalizedDropPoints.Length];
-            particles[i].pos = pos;
-        }
-
-        
         float poly6 = 315f / (64f * Mathf.PI * Mathf.Pow(radius, 9f));
         float spiky = 45f / (Mathf.PI * Mathf.Pow(radius, 6f));
         float visco = 45f / (Mathf.PI * Mathf.Pow(radius, 6f));
@@ -288,22 +293,6 @@ public class FluidRenderController : MonoBehaviour
         fluidComputer.SetFloat("viscoCoeff", visco * viscosity);
 
 
-        hashesBuffer            = new ComputeBuffer(numParticles, 4);
-        globalHashCounterBuffer = new ComputeBuffer(NumHashes, 4);
-        localIndicesBuffer      = new ComputeBuffer(numParticles, 4);
-        inverseIndicesBuffer    = new ComputeBuffer(numParticles, 4);
-        particlesBuffer         = new ComputeBuffer(numParticles, 4 * 8);
-        particlesBuffer.SetData(particles);
-        sortedBuffer            = new ComputeBuffer(numParticles, 4 * 8);
-        forcesBuffer            = new ComputeBuffer(numParticles * 2, 4 * 4);
-        int groupArrLen = Mathf.CeilToInt(NumHashes / 1024f);
-        groupArrBuffer          = new ComputeBuffer(groupArrLen, 4);
-        hashDebugBuffer         = new ComputeBuffer(4, 4);
-        hashValueDebugBuffer    = new ComputeBuffer(numParticles, 4 * 3);
-        meanBuffer              = new ComputeBuffer(numParticles, 4 * 4);
-        covBuffer               = new ComputeBuffer(numParticles, 4 * 3 * 2);
-        hashRangeBuffer         = new ComputeBuffer(NumHashes, 4 * 2);
-
         for (int kernelId = 0; kernelId < KernelNum; kernelId++) {
             fluidComputer.SetBuffer(kernelId, "hashes", hashesBuffer);
             fluidComputer.SetBuffer(kernelId, "globalHashCounter", globalHashCounterBuffer);
@@ -314,8 +303,6 @@ public class FluidRenderController : MonoBehaviour
             fluidComputer.SetBuffer(kernelId, "forces", forcesBuffer);
             fluidComputer.SetBuffer(kernelId, "groupArr", groupArrBuffer);
             fluidComputer.SetBuffer(kernelId, "hashDebug", hashDebugBuffer);
-            fluidComputer.SetBuffer(kernelId, "mean", meanBuffer);
-            fluidComputer.SetBuffer(kernelId, "cov", covBuffer);
             fluidComputer.SetBuffer(kernelId, "hashRange", hashRangeBuffer);
             fluidComputer.SetBuffer(kernelId, "hashValueDebug", hashValueDebugBuffer);
         }
@@ -393,70 +380,6 @@ public class FluidRenderController : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Space)) {
             paused = !paused;
         }
-        // if (Input.GetMouseButton(0)) {
-        //     Ray mouseRay = Cam.ScreenPointToRay(Input.mousePosition);
-        //     if (Physics.Raycast(mouseRay, out RaycastHit hit)) {
-        //         Vector3 pos = new Vector3(
-        //             Mathf.Clamp(hit.point.x, minBounds.x, maxBounds.x),
-        //             maxBounds.y - 1f,
-        //             Mathf.Clamp(hit.point.z, minBounds.z, maxBounds.z)
-        //         );
-        //
-        //         fluidComputer.SetInt("moveBeginIndex", moveParticleBeginIndex);
-        //         fluidComputer.SetInt("moveSize", moveParticles);
-        //         fluidComputer.SetVector("movePos", pos);
-        //         fluidComputer.SetVector("moveVel", Vector3.down * 70);
-        //
-        //         fluidComputer.Dispatch(fluidComputer.FindKernel("MoveParticles"), 1, 1, 1);
-        //
-        //         moveParticleBeginIndex = (moveParticleBeginIndex + moveParticles * moveParticles) % numParticles;
-        //     }
-        // }
-
-        // debug
-        if (Input.GetKeyDown(KeyCode.C)) {
-            uint[] debugResult = new uint[4];
-
-            hashDebugBuffer.SetData(debugResult);
-
-            fluidComputer.Dispatch(fluidComputer.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-
-            hashDebugBuffer.GetData(debugResult);
-
-            uint usedHashBuckets = debugResult[0];
-            uint maxSameHash = debugResult[1];
-
-            Debug.Log($"Total buckets: {NumHashes}, Used buckets: {usedHashBuckets}, Used rate: {(float)usedHashBuckets / NumHashes * 100}%");
-            Debug.Log($"Avg hash collision: {(float)numParticles / usedHashBuckets}, Max hash collision: {maxSameHash}");
-        }
-        // Debug
-        if (Input.GetKeyDown(KeyCode.C)) {
-            uint[] debugResult = new uint[4];
-
-            int[] values = new int[numParticles * 3];
-
-            hashDebugBuffer.SetData(debugResult);
-
-            fluidComputer.Dispatch(fluidComputer.FindKernel("DebugHash"), Mathf.CeilToInt((float)NumHashes / NumThreads), 1, 1);
-
-            hashDebugBuffer.GetData(debugResult);
-
-            uint totalAccessCount = debugResult[2];
-            uint totalNeighborCount = debugResult[3];
-
-            Debug.Log($"Total access: {totalAccessCount}, Avg access: {(float)totalAccessCount / numParticles}, Avg accept: {(float)totalNeighborCount / numParticles}");
-            Debug.Log($"Average accept rate: {(float)totalNeighborCount / totalAccessCount * 100}%");
-
-            hashValueDebugBuffer.GetData(values);
-
-            HashSet<Vector3Int> set = new HashSet<Vector3Int>();
-            for (int i = 0; i < numParticles; i++) {
-                Vector3Int vi = new Vector3Int(values[i*3+0], values[i*3+1], values[i*3+2]);
-                set.Add(vi);
-            }
-
-            Debug.Log($"Total unique hash keys: {set.Count}, Ideal bucket load: {(float)set.Count / NumHashes * 100}%");
-        }
     }
 
     void OnDisable() {
@@ -470,8 +393,6 @@ public class FluidRenderController : MonoBehaviour
         groupArrBuffer.Dispose();
         hashDebugBuffer.Dispose();
         hashValueDebugBuffer.Dispose();
-        meanBuffer.Dispose();
-        covBuffer.Dispose();
         hashRangeBuffer.Dispose();
 
         quadInstancedArgsBuffer.Dispose();

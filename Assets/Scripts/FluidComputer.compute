@@ -1,4 +1,3 @@
-#pragma kernel MoveParticles
 #pragma kernel ResetCounter
 #pragma kernel InsertToBucket
 #pragma kernel DebugHash
@@ -7,7 +6,7 @@
 #pragma kernel PrefixSum3
 #pragma kernel Sort
 #pragma kernel CalcHashRange
-#pragma kernel CalcPressure
+#pragma kernel CalcDensity
 #pragma kernel CalcForces
 #pragma kernel Step
 
@@ -128,24 +127,6 @@ for (uint3 dxyz = 0; dxyz.x < (GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)*(GRI
 #define END_FOREACH_PARTICLES   }}
 
 
-
-[numthreads(THREAD_NUM,1,1)]
-void MoveParticles (uint3 id : SV_DispatchThreadID)
-{
-    const float moveAreaSize = 20.0;
-
-    for (uint x = 0; x < moveSize; x++) {
-        for (uint y = 0; y < moveSize; y++) {
-            uint idx = (moveBeginIndex + x * moveSize + y) % numParticles;
-
-            particles[idx].pos.xyz = movePos + float3(x, 0, y) / moveSize * moveAreaSize - float3(1, 0, 1) * moveAreaSize * 0.5;
-            particles[idx].vel.xyz = 0;
-
-            forces[idx] = 0;
-        }
-    }
-}
-
 [numthreads(THREAD_NUM,1,1)]
 void ResetCounter (uint3 id : SV_DispatchThreadID)
 {
@@ -169,18 +150,6 @@ void DebugHash (uint3 id : SV_DispatchThreadID)
 
         uint totalAccessCount = 0;
         uint neighborCount = 0;
-        // int3 base = floor(GRIDS_PER_DIAMETER/2.0 * (pi.pos.xyz / radius - 1));
-        // for (uint3 dxyz = 0; dxyz.x < (GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1); dxyz += uint3(1, (GRIDS_PER_DIAMETER+1), (GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)))
-        // {
-        //     uint h = calculateHash(base + int3(dxyz / ((GRIDS_PER_DIAMETER+1)*(GRIDS_PER_DIAMETER+1)) % (GRIDS_PER_DIAMETER+1)));
-        //     uint2 range = hashRange[h];
-        //     for (; range.x < range.y; range.x++)
-        //     {
-        //         Particle pj = sorted[range.x];
-        //         float3 diff = pi.pos.xyz - pj.pos.xyz;
-        //         float d = dot(diff, diff);
-        //     }
-        // }
         BEGIN_FOREACH_PARTICLES
             totalAccessCount++;
             if (d < radiusSqr) neighborCount++;
@@ -239,33 +208,28 @@ void Sort (uint3 id : SV_DispatchThreadID)
 
 
 
-[numthreads(128,1,1)]
-void CalcPressure (uint3 id : SV_DispatchThreadID)
+
+[numthreads(THREAD_NUM,1,1)]
+void CalcDensity (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numParticles) {
         Particle pi = sorted[id.x];
         float density = 0;
-        float4 m = 0;
 
         BEGIN_FOREACH_PARTICLES
             [branch] if (d < radiusSqr) {
                 density += poly6(d);
-                m += isotropic(d) * float4(pj.pos.xyz, 1);
             }
         END_FOREACH_PARTICLES
 
         density *= mass;
 
-        m.xyz /= m.w;
-        mean[id.x] = m;
-
         sorted[id.x].pos.w = density;
-        // Clamp negative pressure. 邻居太少
         sorted[id.x].vel.w = max(gasConst * (density - restDensity), 0);
     }
 }
 
-[numthreads(128,1,1)]
+[numthreads(THREAD_NUM,1,1)]
 void CalcForces (uint3 id : SV_DispatchThreadID)
 {
     if (id.x < numParticles) {
@@ -273,25 +237,17 @@ void CalcForces (uint3 id : SV_DispatchThreadID)
 
         float3 force = 0;
 
-        float4 m = mean[id.x];
-        float3 cov1 = 0, cov2 = 0;
         uint cnt = 0;
 
         BEGIN_FOREACH_PARTICLES
             [branch] if (d < radiusSqr) {
                 float l = sqrt(d);
-
                 if (d > 0) {
                     // Pressure
                     force += (pi.vel.w + pj.vel.w) / (2*pj.pos.w * l) * spiky(l) * diff;
                     // Viscosity
                     force += visco(l) / pj.pos.w * (pj.vel - pi.vel);
                 }
-
-                float w = isotropic(d);
-                float3 centered = pj.pos.xyz - m.xyz;
-                cov1 += w * centered * centered;
-                cov2 += w * centered.xyz * centered.yzx;
                 cnt++;
             }
 
@@ -303,8 +259,6 @@ void CalcForces (uint3 id : SV_DispatchThreadID)
         force *= mass;
 
         forces[id.x].xyz = force;
-
-        mean[id.x].w = cnt;
     }
 }
 
